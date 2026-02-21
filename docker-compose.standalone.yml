@@ -1,0 +1,57 @@
+# Деплой на чистом VPS: Traefik + сайт
+# Запуск: docker compose -f docker-compose.standalone.yml up -d --build
+
+services:
+  traefik:
+    image: traefik:v3
+    restart: always
+    command:
+      - --api.dashboard=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.mytlschallenge.acme.httpchallenge=true
+      - --certificatesresolvers.mytlschallenge.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.mytlschallenge.acme.email=${ACME_EMAIL:-admin@nanonomera.ru}
+      - --certificatesresolvers.mytlschallenge.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
+    networks:
+      - web
+
+  nextjs:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_SITE_URL=${SITE_URL:-https://nanonomera.ru}
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_SITE_URL=${SITE_URL:-https://nanonomera.ru}
+      - SITE_URL=${SITE_URL:-https://nanonomera.ru}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.nanonomera.rule=Host(`nanonomera.ru`) || Host(`www.nanonomera.ru`)
+      - traefik.http.routers.nanonomera.tls=true
+      - traefik.http.routers.nanonomera.entrypoints=websecure
+      - traefik.http.routers.nanonomera.tls.certresolver=mytlschallenge
+      - traefik.http.routers.nanonomera-http.rule=Host(`nanonomera.ru`) || Host(`www.nanonomera.ru`)
+      - traefik.http.routers.nanonomera-http.entrypoints=web
+      - traefik.http.routers.nanonomera-http.middlewares=redirect-to-https
+      - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
+      - traefik.http.services.nanonomera.loadbalancer.server.port=3000
+    networks:
+      - web
+
+networks:
+  web:
+    driver: bridge
+
+volumes:
+  traefik_letsencrypt:
